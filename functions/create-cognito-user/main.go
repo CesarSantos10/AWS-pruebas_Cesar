@@ -17,6 +17,8 @@ type CognitoClient interface {
 	SignUp(email string, password string) (string, error)
 	AdminCreateUser(email string) (string, error)
 	SignIn(email string, password string) (string, error)
+	AdminDisableUser(username string) (string, error)
+	AdminEnableUser(username string) (string, error)
 }
 
 type awsCognitoClient struct {
@@ -27,6 +29,7 @@ type awsCognitoClient struct {
 
 type Event struct {
 	Email    string `json:"email"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
 	Case     int    `json:"case"`
@@ -48,7 +51,7 @@ func (d *deps) handler(ctx context.Context, event Event) (string, error) {
 		appClientId:   "1brn5dsq5sbom0ba9bckeqlmve",
 		userPoolId:    "us-east-1_gDzPxPab7",
 	}
-	fmt.Printf("Email :%s Password: %s Name: %s \n", event.Email, event.Password, event.Name)
+	fmt.Printf("Email :%s Password: %s Name: %s, UserName: %s \n", event.Email, event.Password, event.Name, event.Username)
 	fmt.Println("cliente: ", client)
 
 	switch event.Case {
@@ -58,6 +61,10 @@ func (d *deps) handler(ctx context.Context, event Event) (string, error) {
 		client.AdminCreateUser(event.Email, event.Name)
 	case 2: // SignIn
 		client.SignIn(event.Email, event.Password)
+	case 3: // AdminDisableUser
+		client.AdminDisableUser(event.Username)
+	case 4: // AdminDisableUser
+		client.AdminEnableUser(event.Username)
 	}
 
 	fmt.Print(client)
@@ -135,6 +142,30 @@ func (ctx *awsCognitoClient) SignIn(email string, password string) (string, erro
 		fmt.Println("Error  : InitiateAuth", err)
 		return "", err
 	}
+
+	return result.String(), nil
+}
+
+func (ctx *awsCognitoClient) AdminDisableUser(username string) (string, error) {
+
+	adminDisableUserInput := &cognito.AdminDisableUserInput{
+		UserPoolId: aws.String(ctx.userPoolId),
+		Username:   aws.String(username),
+	}
+
+	result, _ := ctx.cognitoClient.AdminDisableUser(adminDisableUserInput)
+
+	return result.String(), nil
+}
+
+func (ctx *awsCognitoClient) AdminEnableUser(username string) (string, error) {
+
+	adminEnableUserInput := &cognito.AdminEnableUserInput{
+		UserPoolId: aws.String(ctx.userPoolId),
+		Username:   aws.String(username),
+	}
+
+	result, _ := ctx.cognitoClient.AdminEnableUser(adminEnableUserInput)
 
 	return result.String(), nil
 }
