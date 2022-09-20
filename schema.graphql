@@ -1,0 +1,161 @@
+type Student{
+    id: String!
+    sk: String!
+    name: String
+    age: Int
+}
+
+type StudentOutput{
+    items: [Student]
+}
+
+##########################
+######     OFVI     ######
+##########################
+
+type Option {
+    # titulo
+    title: String!
+    # url
+    url: String!
+    # icono
+    icon: String
+    # activo o no
+    active: Boolean!
+}
+
+enum UserStatus{
+  ACTIVE
+  BLOCKED
+  ARCHIVED
+  UNCONFIRMED
+}
+
+type ApplicationsOutput{
+   #elementos
+   items: [Option]
+}
+type ProcessesOutput{
+   #elementos
+   items: [Option]
+}
+
+type Settings {
+  # Aplicaciones
+  apps:[Option]
+  # Opciones del menu
+  menu: [Option]!
+  # Procesos
+  processes:[Option]!
+  # foto
+  photo: String
+  # nombre completo
+  name: String!
+  # numero de documento
+  dni: String!
+  # tipo de documento
+  docType: String!
+  # email corporativo
+  email: String!
+  # telefono corporativo
+  phone: String
+  # departamento o area
+  area: String!
+  # subdepartamento o subarea
+  subArea: String!
+  # dias permitidos
+  days: Int!
+  # dias permitidos de home office
+  homeOffice: Int
+  # rol
+  role: String
+  # rol de oficios
+  officeRole: String
+  # jefe
+  boss: String
+  # nombre del jefe
+  bossName: String
+  # backup
+  backup: String
+  # nombre del backup
+  backupName: String
+  # usuario
+  user: String
+  # sexo
+  gender: String
+  # fecha de nacimiento
+  birthDate: String
+  # pais de nacimiento
+  countryOfBirth: String
+  # email personal
+  personalEmail: String
+  # estado civil
+  maritalStatus: String
+  # telefono personal
+  personalPhone: String
+  # pais de residencia
+  countryOfResidence: String
+  # departamento de residencia
+  residenceDepartment: String
+  # dirección
+  address: String
+  # puesto o cargo
+  workerType: String
+  # fecha de ingreso
+  entryDate: String!
+  # fecha de ultima sesion
+  lastSessionDate: String
+  # fecha de creación de usuario
+  creationDate: String!
+  # estado de usuario
+  userStatus: UserStatus!
+  # tipo de usuario
+  userType: String!
+}
+
+input StudentInput{
+    id: String!
+    sk: String!
+    name: String
+    age: Int
+}
+
+type SettingsOutput {
+  # elementos
+  items: [Settings]
+  # proxima pagina
+  nextToken: String
+}
+
+type Query{
+    getStudentAll: StudentOutput
+    getStudent(id: String!, sk: String!): Student
+    getSettings(id: String!): Settings
+    getSettingsAll: [Settings]
+    getAllUsers(process: String, nextToken: String): SettingsOutput
+    # Martes:
+    # if role y officeRole
+    # if process SW -> Mostrar los usuarios que tengan valores en role
+    # if process OFVI -> Mostrar los usuarios que tengan valores en officeRole
+    # if process "" -> Mostrar todo
+    # New - miércoles:
+    # jugar con el query para que reemplace a filter
+    # agregar argumento limits como parámetro de entrada
+    # si no funciona query investigar el reemplazo de filter
+    # 
+    getApplicationsAll: ApplicationsOutput
+    getProcessesAll: ProcessesOutput
+}
+
+type Mutation{
+    createStudent(id: String!, sk: String!, name: String!): Student,
+    deleteStudent(id: String!, sk: String!): Student,
+    updateStudent(id: String!, sk: String!, name: String!): Student,
+    updateAgeStudent(id: String!, sk: String!): Student
+    updateStudentComplete(student:StudentInput!): Student
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+}

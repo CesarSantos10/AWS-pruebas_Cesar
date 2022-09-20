@@ -1,0 +1,70 @@
+{
+    "Comment": "Update Age Student",
+    "StartAt": "Get Age",
+    "States": {
+        "Get Age":{
+            "Type": "Task",
+            "Resource": "${DDBGetItem}",
+            "Parameters": {
+                "TableName": "${TableName}",
+                "Key": {
+                    "id": {
+                        "S.$": "$.id"
+                    },
+                    "sk": {
+                        "S.$": "$.sk"
+                    }
+                },
+                "ProjectionExpression": "age"
+            },
+            "ResultPath": "$.result",
+            "Next": "Sum Age"
+        },
+        
+        "Sum Age":   {
+            "Type": "Task",
+            "Resource": "${SumAgeFnArn}",
+            "Parameters":{
+                "age.$": "$.result.Item.age.N"               
+            },
+            "ResultPath": "$.result",
+            "Next": "Update Age"
+        },
+
+        "Update Age":{
+            "Type": "Task",
+            "Resource": "${DDBUpdateItem}",
+            "Parameters": {
+                "TableName": "${TableName}",
+                "Key": {
+                    "id": {
+                        "S.$": "$.id"
+                    },
+                    "sk": {
+                        "S.$": "$.sk"
+                    }
+                },
+                "ExpressionAttributeValues": {
+                    ":age": {
+                        "N.$": "States.Format('{}',$.result)"
+                    }
+                },
+                "ReturnValues": "ALL_NEW",
+                "UpdateExpression": "SET age = :age"
+            },
+            "ResultPath": "$.att",
+            "Next": "Last State"
+        },
+
+        "Last State":{
+            "Type": "Pass",
+            "Parameters":{
+                "id.$":"$.att.Attributes.id.S",
+                "sk.$":"$.att.Attributes.sk.S",
+                "name.$":"$.att.Attributes.name.S",
+                "age.$":"$.result"
+            },
+            "End": true
+        }
+    }
+}

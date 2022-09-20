@@ -1,0 +1,804 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: >
+  Tutorial to use AppSync
+
+Resources:
+### AppSync ###
+
+ ###################
+ ## AppSync Role  ##
+ ###################
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowAccessForAppsyncResolvers
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartSyncExecution
+                Resource:
+                  - !Ref UpdateAgeStudentStateMachine
+                  - !Ref UpdateStudentCompleteStateMachine
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt DBStudent.Arn
+                  - !Sub 
+                    - "${Table}/index/*"
+                    - { Table: !GetAtt DBStudent.Arn }
+                  - !GetAtt DynamoSettingsOBTable.Arn
+                  - !Sub 
+                    - "${Table}/index/*"
+                    - { Table: !GetAtt DynamoSettingsOBTable.Arn }
+              # - Effect: Allow
+              #   Action:
+              #   - lambda:invokeFunction
+              #   Resource: 
+              #     - !GetAtt AnswerCheckFunction.Arn
+
+  AppSyncApi:
+    DependsOn: AppSyncServiceRole
+    Type: AWS::AppSync::GraphQLApi
+    Description: "The GraphQL API for the single table App"
+    Properties:
+      Name: tutorial-appsync
+      AuthenticationType: API_KEY
+
+  # API Key for external access
+  AppSyncApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties: 
+      ApiId: !GetAtt AppSyncApi.ApiId
+
+  # AppSync Schema
+  AppSyncSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      DefinitionS3Location: "./schema.graphql"
+  
+  # AppSync Data Source for DynamoDB
+  AppSyncTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: SingleTableStudent
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Description: "The Single Table AppSync Data Source"
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref DBStudent
+        AwsRegion: !Sub ${AWS::Region}
+
+  # AppSync Data Source for StepFunction
+  StepFunctionsHttpDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Name: StepFunctionsHttpDataSource
+      Description: Step Functions HTTP
+      Type: HTTP
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      HttpConfig:
+        Endpoint: !Sub https://sync-states.${AWS::Region}.amazonaws.com/
+        AuthorizationConfig:
+          AuthorizationType: AWS_IAM
+          AwsIamConfig:
+            SigningRegion: !Ref AWS::Region
+            SigningServiceName: states
+  
+  # AppSync Data Source for DynamoDB SettingsOB
+  AppSyncDynamoSettingsOBTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      Name: DynamoSettingsOBTableDataSource
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Description: "The Single Table AppSync Data Source"
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref DynamoSettingsOBTable
+        AwsRegion: !Sub ${AWS::Region}
+  
+
+  ### Resolvers ##
+  ################
+
+  #### OFVI Resolvers ###########
+  
+  # Resolver: Query - getAllUsers
+  GetAllUsersResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getAllUsers
+      DataSourceName: !GetAtt AppSyncDynamoSettingsOBTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version" : "2017-02-28",
+          "operation" : "Query",    
+          "index" : "list-users",      
+          "query" : 
+          {
+            "expression": "sort = :sort",            
+            "expressionValues" : 
+            {
+                ":sort" : $util.dynamodb.toDynamoDBJson("SETTINGS"),
+                "attribute_exists(officeRole)"
+            }
+          },
+          #if($context.args.process == "SW")
+          "filter" : {
+            "expression" : "attribute_exists(#role)",
+            "expressionNames" : {
+                "#role" : "role"
+              }
+          },
+          #elseif($context.args.process == "OFVI")
+          "filter" : {
+            "expression" : "attribute_exists(officeRole)"
+          },
+          #end
+          #if( $context.args.nextToken ) "nextToken": "$context.args.nextToken", #end
+          "limit" : 500
+        }
+      ResponseMappingTemplate: >
+        {
+          "items": [
+                        #foreach($item in $ctx.result.items)
+                        
+                        {
+                            "user": $util.toJson($item['id']),
+                            "apps": $util.toJson($item['apps']),
+                            "menu": $util.toJson($item['menu']),                           
+                            "processes": $util.toJson($item['processes']),                           
+                            "photo": $util.toJson($item['photo']),
+                            "name": $util.toJson($item['name']),                           
+                            "dni": $util.toJson($item['dni']),                           
+                            "docType": $util.toJson($item['docType']),                           
+                            "email": $util.toJson($item['email']),                           
+                            "phone": $util.toJson($item['phone']),                           
+                            "area": $util.toJson($item['area']),                           
+                            "subArea": $util.toJson($item['subArea']),                           
+                            "days": $util.toJson($item['days']),
+                            "homeOffice": $util.toJson($item['homeOffice']),
+                            "role": $util.toJson($item['role']),
+                            "officeRole": $util.toJson($item['officeRole']),
+                            "boss": $util.toJson($item['boss']),                           
+                            "bossName": $util.toJson($item['bossName']),
+                            "backup": $util.toJson($item['backup']),                           
+                            "backupName": $util.toJson($item['backupName']),     
+                            "gender": $util.toJson($item['gender']),
+                            "birthDate": $util.toJson($item['birthDate']),
+                            "countryOfBirth": $util.toJson($item['countryOfBirth']),
+                            "personalEmail": $util.toJson($item['personalEmail']),
+                            "maritalStatus": $util.toJson($item['maritalStatus']),
+                            "personalPhone": $util.toJson($item['personalPhone']),                            
+                            "countryOfResidence": $util.toJson($item['countryOfResidence']),
+                            "residenceDepartment": $util.toJson($item['residenceDepartment']),
+                            "address": $util.toJson($item['address']),
+                            "workerType": $util.toJson($item['workerType']),
+                            "entryDate": $util.toJson($item['entryDate']),
+                            "lastSessionDate": $util.toJson($item['lastSessionDate']),
+                            "creationDate": $util.toJson($item['creationDate']),
+                            "userStatus": $util.toJson($item['userStatus']),
+                            "userType": $util.toJson($item['userType'])
+                        }#if($foreach.hasNext),#end
+                        #end
+                     ],
+          "nextToken": $util.toJson($ctx.result.nextToken)
+        }
+
+
+  # Resolver: Query - getSettings
+  GetSettingsResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties: 
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getSettings
+      DataSourceName: !GetAtt AppSyncDynamoSettingsOBTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+            "sort": $util.dynamodb.toDynamoDBJson("SETTINGS")
+          }
+        }
+      ResponseMappingTemplate: >
+        {
+            "apps": $util.toJson($ctx.result['apps']),
+            "menu": $util.toJson($ctx.result['menu']),                           
+            "processes": $util.toJson($ctx.result['processes']),                           
+            "photo": $util.toJson($ctx.result['photo']),
+            "name": $util.toJson($ctx.result['name']),                           
+            "dni": $util.toJson($ctx.result['dni']),                           
+            "docType": $util.toJson($ctx.result['docType']),                           
+            "email": $util.toJson($ctx.result['email']),                           
+            "phone": $util.toJson($ctx.result['phone']),                           
+            "area": $util.toJson($ctx.result['area']),                           
+            "subArea": $util.toJson($ctx.result['subArea']),                           
+            "days": $util.toJson($ctx.result['days']),
+            "homeOffice": $util.toJson($ctx.result['homeOffice']),
+            "role": $util.toJson($ctx.result['role']),
+            "boss": $util.toJson($ctx.result['boss']),                           
+            "bossName": $util.toJson($ctx.result['bossName']),
+            "backup": $util.toJson($ctx.result['backup']),                           
+            "backupName": $util.toJson($ctx.result['backupName']),                            
+            "user": $util.toJson($ctx.result['id']),
+
+            "gender": $util.toJson($ctx.result['gender']),
+            "birthDate": $util.toJson($ctx.result['birthDate']),
+            "countryBirth": $util.toJson($ctx.result['countryBirth']),
+            "personalEmail": $util.toJson($ctx.result['personalEmail']),
+            "civilState": $util.toJson($ctx.result['civilState']),
+            "personalPhone": $util.toJson($ctx.result['personalPhone']),                            
+            "countryResidence": $util.toJson($ctx.result['countryResidence']),
+            "departmentResidence": $util.toJson($ctx.result['departmentResidence']),
+            "address": $util.toJson($ctx.result['address']),
+
+            "jobTittle": $util.toJson($ctx.result['jobTittle']),
+            "entryDate": $util.toJson($ctx.result['entryDate']),
+            "lastSessionDate": $util.toJson($ctx.result['lastSessionDate']),
+            "creationDate": $util.toJson($ctx.result['creationDate']),
+            "userState": $util.toJson($ctx.result['userState']),
+            "userType": $util.toJson($ctx.result['userType'])
+        }
+  
+  # Resolver: Query - getSettingsAll
+  GetSettingsAllResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getSettingsAll
+      DataSourceName: !GetAtt AppSyncDynamoSettingsOBTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version" : "2017-02-28",
+          "operation" : "Query",
+          "index" : "list-users",    
+          "query" : {
+            "expression": "sort = :sort",            
+            "expressionValues" : {
+                ":sort" : $util.dynamodb.toDynamoDBJson("SETTINGS")
+            }
+          }
+        }
+      ResponseMappingTemplate: >
+        [
+                        #foreach($item in $ctx.result.items)
+                        {
+                            "apps": $util.toJson($item['apps']),
+                            "menu": $util.toJson($item['menu']),                           
+                            "processes": $util.toJson($item['processes']),                           
+                            "photo": $util.toJson($item['photo']),
+                            "name": $util.toJson($item['name']),                           
+                            "dni": $util.toJson($item['dni']),                           
+                            "docType": $util.toJson($item['docType']),                           
+                            "email": $util.toJson($item['email']),                           
+                            "phone": $util.toJson($item['phone']),                           
+                            "area": $util.toJson($item['area']),                           
+                            "subArea": $util.toJson($item['subArea']),                           
+                            "days": $util.toJson($item['days']),
+                            "homeOffice": $util.toJson($item['homeOffice']),
+                            "role": $util.toJson($item['role']),
+                            "boss": $util.toJson($item['boss']),                           
+                            "bossName": $util.toJson($item['bossName']),
+                            "backup": $util.toJson($item['backup']),                           
+                            "backupName": $util.toJson($item['backupName']),                            
+                            "user": $util.toJson($item['id']),
+
+                            "gender": $util.toJson($item['gender']),
+                            "birthDate": $util.toJson($item['birthDate']),
+                            "countryBirth": $util.toJson($item['countryBirth']),
+                            "personalEmail": $util.toJson($item['personalEmail']),
+                            "civilState": $util.toJson($item['civilState']),
+                            "personalPhone": $util.toJson($item['personalPhone']),                            
+                            "countryResidence": $util.toJson($item['countryResidence']),
+                            "departmentResidence": $util.toJson($item['departmentResidence']),
+                            "address": $util.toJson($item['address']),
+
+                            "jobTittle": $util.toJson($item['jobTittle']),
+                            "entryDate": $util.toJson($item['entryDate']),
+                            "lastSessionDate": $util.toJson($item['lastSessionDate']),
+                            "creationDate": $util.toJson($item['creationDate']),
+                            "userState": $util.toJson($item['userState']),
+                            "userType": $util.toJson($item['userType'])
+                        }#if($foreach.hasNext),#end
+                        #end
+                    ]
+                  
+  # Resolver: Query - getApplicationsAll
+  GetAplicationsAllResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getApplicationsAll
+      DataSourceName: !GetAtt AppSyncDynamoSettingsOBTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version" : "2017-02-28",
+          "operation" : "Query",   
+          "query" : {
+            "expression": "id = :id",            
+            "expressionValues" : {
+                ":id" : $util.dynamodb.toDynamoDBJson("APPLICATIONS")
+            }
+          }
+        }
+      ResponseMappingTemplate: >
+        {
+          "items": [
+                        #foreach($item in $ctx.result.items)
+                        {
+                            "title": $util.toJson($item['title']),
+                            "url": $util.toJson($item['url']),                           
+                            "icon": $util.toJson($item['icon']),                           
+                            "active": $util.toJson($item['active'])
+                        }#if($foreach.hasNext),#end
+                        #end
+                    ]
+        }
+
+  # Resolver: Query - getProcessesAll
+  GetProcessesAllResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getProcessesAll
+      DataSourceName: !GetAtt AppSyncDynamoSettingsOBTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version" : "2017-02-28",
+          "operation" : "Query",   
+          "query" : {
+            "expression": "id = :id",            
+            "expressionValues" : {
+                ":id" : $util.dynamodb.toDynamoDBJson("PROCESSES")
+            }
+          }
+        }
+      ResponseMappingTemplate: >
+        {
+          "items": [
+                        #foreach($item in $ctx.result.items)
+                        {
+                            "title": $util.toJson($item['title']),
+                            "url": $util.toJson($item['url']),                           
+                            "icon": $util.toJson($item['icon']),                           
+                            "active": $util.toJson($item['active'])
+                        }#if($foreach.hasNext),#end
+                        #end
+                    ]
+        }
+
+
+
+  # Resolver: Mutation - updateAgeStudent
+  UpdateAgeStudentResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: updateAgeStudent
+      DataSourceName: !GetAtt StepFunctionsHttpDataSource.Name
+      RequestMappingTemplate: !Sub >
+        {
+          "version": "2018-05-29",
+          "method": "POST",
+          "resourcePath": "/",
+          "params": {
+            "headers": {
+              "content-type": "application/x-amz-json-1.0",
+              "x-amz-target":"AWSStepFunctions.StartSyncExecution"
+            },
+            "body": {
+              "stateMachineArn": "${UpdateAgeStudentStateMachine}",
+              "input": "{ \"id\": $util.escapeJavaScript($util.toJson($ctx.args.id)), \"sk\": $util.escapeJavaScript($util.toJson($ctx.args.sk))}"
+            }
+          }
+        }
+      ResponseMappingTemplate: $util.parseJson($ctx.result.body).output
+
+  # Resolver: Mutation - updateStudentComplete
+  UpdateStudentCompleteResolver:
+    Type: AWS::AppSync::Resolver
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: updateStudentComplete
+      DataSourceName: !GetAtt StepFunctionsHttpDataSource.Name
+      RequestMappingTemplate: !Sub >
+        {
+          "version": "2018-05-29",
+          "method": "POST",
+          "resourcePath": "/",
+          "params": {
+            "headers": {
+              "content-type": "application/x-amz-json-1.0",
+              "x-amz-target":"AWSStepFunctions.StartSyncExecution"
+            },
+            "body": {
+              "stateMachineArn": "${UpdateStudentCompleteStateMachine}",
+              "input": "{ \"student\": $util.escapeJavaScript($util.toJson($ctx.args.student))}"
+            }
+          }
+        }
+      ResponseMappingTemplate: $util.parseJson($ctx.result.body).output
+
+
+  # Resolver: AppSync-getStudent
+  AppSyncGetStudentResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties: 
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getStudent
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($ctx.args.id),
+            "sk": $util.dynamodb.toDynamoDBJson($ctx.args.sk)
+          }
+        }
+      ResponseMappingTemplate: >
+        {
+          "sk":$util.toJson($ctx.result.sk),
+          "id": $util.toJson($ctx.result.id),
+          "name": $util.toJson($ctx.result.name)
+        }
+
+  # Resolver: AppSync-getStudentAll
+  AppSyncGetAllResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties: 
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getStudentAll 
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2018-05-29",
+          "operation": "Query",
+          "query": {
+              "expression": "id = :id", 
+              "expressionValues":	{              
+                ":id" : $util.dynamodb.toDynamoDBJson("Estudiante")
+              }
+            }
+        }
+      ResponseMappingTemplate: >
+        {
+          "items":[
+                    #foreach($item in $ctx.result.items)
+                    {
+                      "id": $util.toJson($item['id']),
+                      "sk":$util.toJson($item['sk']),
+                      "name": $util.toJson($item['name']),
+                      "age": $util.toJson($item['age'])
+                    }#if($foreach.hasNext),#end
+                    #end
+                  ]
+        }
+
+  # Resolver: AppSync-createStudent
+  AppSyncCreateStudentResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties: 
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: createStudent
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: >
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($context.args.id),
+            "sk": $util.dynamodb.toDynamoDBJson($context.args.sk)
+          },
+          "attributeValues": {
+            "name": $util.dynamodb.toDynamoDBJson($context.args.name)
+          }
+        }
+      ResponseMappingTemplate: >
+        {
+          "sk":$util.toJson($ctx.result.sk),
+          "id": $util.toJson($ctx.result.id),
+          "name": $util.toJson($ctx.result.name)
+        }
+
+  # Resolver: AppSync-updateStudent
+  AppSyncUpdateStudentResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: updateStudent
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: >        
+        {
+            "version" : "2017-02-28",
+            "operation" : "UpdateItem",
+            "key" : {
+                "id" : $util.dynamodb.toDynamoDBJson($ctx.args.id),
+                "sk" : $util.dynamodb.toDynamoDBJson($ctx.args.sk)
+            },
+            "update":{
+              "expression" : "set #name = :name",
+              "expressionNames" : {
+                "#name" : "name",
+                },
+              "expressionValues" : {
+                ":name" : $utils.dynamodb.toDynamoDBJson($ctx.args.name)
+              }
+            }
+        }
+      ResponseMappingTemplate: >
+        {
+          "id": $util.toJson($ctx.result.id),                            
+          "sk": $util.toJson($ctx.result.sk),
+          "name": $util.toJson($ctx.result.name)
+        }
+
+  # Resolver: AppSync-deleteStudent
+  AppSyncDeleteStudentResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: deleteStudent
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: >        
+        {
+            "version" : "2017-02-28",
+            "operation" : "DeleteItem",
+            "key" : {
+                "id" : $util.dynamodb.toDynamoDBJson($ctx.args.id),
+                "sk" : $util.dynamodb.toDynamoDBJson($ctx.args.sk)
+            }
+        }
+      ResponseMappingTemplate: >
+        {
+          "id": $util.toJson($ctx.result.id),                            
+          "sk": $util.toJson($ctx.result.sk),
+          "name": $util.toJson($ctx.result.name)
+        }
+
+    
+  ## LOGS      ##
+  ###############  
+  
+  UpdateAgeStudentLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/states/${AWS::StackName}/update-age-student
+      RetentionInDays: 3
+
+  UpdateStudentCompleteLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/states/${AWS::StackName}/update-student-complete
+      RetentionInDays: 3
+  
+  
+
+
+  ## StateMachines  ##
+  ###################
+
+  UpdateAgeStudentStateMachine:
+    Type: AWS::Serverless::StateMachine 
+    Properties:
+      Type: EXPRESS
+      Name: updateAgeStudentStateMachine
+      DefinitionUri: statemachines/update-age-student.asl.json
+      DefinitionSubstitutions:
+        DDBDeleteItem: !Sub arn:${AWS::Partition}:states:::dynamodb:deleteItem
+        DDBUpdateItem: !Sub arn:${AWS::Partition}:states:::dynamodb:updateItem
+        DDBGetItem: !Sub arn:${AWS::Partition}:states:::dynamodb:getItem
+        DDBQuery: arn:aws:states:::aws-sdk:dynamodb:query
+        TableName: !Ref DBStudent
+        SumAgeFnArn: !GetAtt SumAgeFn.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt UpdateAgeStudentLogs.Arn
+        IncludeExecutionData: true
+        Level: ALL   
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SumAgeFn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DBStudent 
+        - CloudWatchLogsFullAccess
+  
+  UpdateStudentCompleteStateMachine:
+    Type: AWS::Serverless::StateMachine 
+    Properties:
+      Type: EXPRESS
+      Name: updateStudentCompleteStateMachine
+      DefinitionUri: statemachines/update_student_complete.asl.json
+      DefinitionSubstitutions:
+        DDBDeleteItem: !Sub arn:${AWS::Partition}:states:::dynamodb:deleteItem
+        DDBUpdateItem: !Sub arn:${AWS::Partition}:states:::dynamodb:updateItem
+        DDBGetItem: !Sub arn:${AWS::Partition}:states:::dynamodb:getItem
+        DDBQuery: arn:aws:states:::aws-sdk:dynamodb:query
+        TableName: !Ref DBStudent
+        UpdateStudentCompleteFnArn: !GetAtt UpdateStudentCompleteFn.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt UpdateStudentCompleteLogs.Arn
+        IncludeExecutionData: true
+        Level: ALL   
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref UpdateStudentCompleteFn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DBStudent 
+        - CloudWatchLogsFullAccess
+  ######################
+  ## Amazon S3 bucket ##
+  ######################
+  TemplateBucket:
+    Type: AWS::S3::Bucket
+
+
+  ## Functions  ##
+  ################
+
+  GetInvitationMailTemplateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/get-invitation-mail-template
+      Handler: ofvi-get-invitation-mail-template
+      Runtime: go1.x
+      Environment:
+        Variables:
+          REGION: !Sub ${AWS::Region}
+          BucketName: !Ref TemplateBucket
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3ReadPolicy:
+            BucketName: !Ref TemplateBucket
+
+  CreateCognitouserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create-cognito-user
+      Handler: ofvi-create-cognito-user
+      Runtime: go1.x
+      Environment:
+        Variables:
+          TableName: !Ref DynamoSettingsOBTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoSettingsOBTable
+        - AWSLambdaBasicExecutionRole
+
+  SumAgeFn:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: handler
+      Runtime: go1.x
+      MemorySize: 128    
+      Timeout: 5
+      Environment:
+        Variables:
+          TableName: !Ref DBStudent
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DBStudent
+        - AWSLambdaBasicExecutionRole
+
+  UpdateStudentCompleteFn:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: handler
+      Runtime: go1.x
+      MemorySize: 128    
+      Timeout: 5
+      Environment:
+        Variables:
+          TableName: !Ref DBStudent
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DBStudent
+        - AWSLambdaBasicExecutionRole
+
+  # DynamoDB
+
+  DynamoSettingsOBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SettingsOBTable
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: sort
+          AttributeType: S        
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: sort
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: list-users
+          KeySchema:
+            - AttributeName: sort
+              KeyType: HASH
+            - AttributeName: id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  DBStudent:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TutorialTableStudent
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S        
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  APIKey:
+    Description: API Key
+    Value: !GetAtt AppSyncApiKey.ApiKey
+  GraphQLApiEndpoint:
+    Description: The URL to the GraphQL Endpoint
+    Value: !GetAtt AppSyncApi.GraphQLUrl
+  GraphQLApiId:
+    Description: The API ID of the GraphQL API
+    Value: !GetAtt AppSyncApi.ApiId         

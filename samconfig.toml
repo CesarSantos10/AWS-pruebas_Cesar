@@ -1,0 +1,10 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "app-AppSync4"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1rnjg4nmz92ne"
+s3_prefix = "app-AppSync4"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+image_repositories = []

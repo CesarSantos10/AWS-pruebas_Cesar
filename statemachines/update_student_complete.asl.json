@@ -1,0 +1,23 @@
+{
+    "Comment": "Update Student Complete StateMachine",
+    "StartAt": "Update Student Complete",
+    "States": {
+        "Update Student Complete": {
+            "Type": "Task",
+            "Resource": "${UpdateStudentCompleteFnArn}",
+            "ResultPath": "$.att",
+            "Next": "Last State"
+        },
+
+        "Last State":{
+            "Type": "Pass",
+            "Parameters":{
+                "id.$":"$.student.id",
+                "sk.$":"$.student.sk",
+                "age.$":"$.att.age",
+                "name.$":"$.att.name"                
+            },
+            "End": true
+        }
+    }
+}
