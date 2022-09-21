@@ -19,6 +19,7 @@ type CognitoClient interface {
 	SignIn(email string, password string) (string, error)
 	AdminDisableUser(username string) (string, error)
 	AdminEnableUser(username string) (string, error)
+	ChangePasswordUser(email string, password string, newpassword string) (string, error)
 }
 
 type awsCognitoClient struct {
@@ -28,11 +29,12 @@ type awsCognitoClient struct {
 }
 
 type Event struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
-	Case     int    `json:"case"`
+	Email       string `json:"email"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	PasswordNew string `json:"passwordnew"`
+	Name        string `json:"name"`
+	Case        int    `json:"case"`
 }
 
 func (d *deps) handler(ctx context.Context, event Event) (string, error) {
@@ -51,7 +53,7 @@ func (d *deps) handler(ctx context.Context, event Event) (string, error) {
 		appClientId:   "1brn5dsq5sbom0ba9bckeqlmve",
 		userPoolId:    "us-east-1_gDzPxPab7",
 	}
-	fmt.Printf("Email :%s Password: %s Name: %s, UserName: %s \n", event.Email, event.Password, event.Name, event.Username)
+	fmt.Printf("Email :%s Password: %s PasswordNew: %s Name: %s, UserName: %s \n", event.Email, event.Password, event.PasswordNew, event.Name, event.Username)
 	fmt.Println("cliente: ", client)
 
 	switch event.Case {
@@ -65,6 +67,8 @@ func (d *deps) handler(ctx context.Context, event Event) (string, error) {
 		client.AdminDisableUser(event.Username)
 	case 4: // AdminDisableUser
 		client.AdminEnableUser(event.Username)
+	case 5: // AdminDisableUser
+		client.ChangePasswordUser(event.Email, event.Password, event.PasswordNew)
 	}
 
 	fmt.Print(client)
@@ -168,4 +172,51 @@ func (ctx *awsCognitoClient) AdminEnableUser(username string) (string, error) {
 	result, _ := ctx.cognitoClient.AdminEnableUser(adminEnableUserInput)
 
 	return result.String(), nil
+}
+
+func (ctx *awsCognitoClient) ChangePasswordUser(email string, password string, newpassword string) (string, error) {
+	fmt.Println("Error 1")
+	initiateAuthInput := &cognito.InitiateAuthInput{
+		AuthFlow: aws.String("USER_PASSWORD_AUTH"),
+		AuthParameters: aws.StringMap(map[string]string{
+			"USERNAME": email,
+			"PASSWORD": password,
+		}),
+		ClientId: aws.String(ctx.appClientId),
+	}
+
+	fmt.Println("Error 2")
+
+	result, err := ctx.cognitoClient.InitiateAuth(initiateAuthInput)
+
+	if err != nil {
+		fmt.Println("Error  : InitiateAuth", err)
+		return "", err
+	}
+	fmt.Println(result)
+	fmt.Println("Error 2.1")
+
+	accessToken := result.AuthenticationResult.AccessToken
+
+	fmt.Println("AccessToken: ", accessToken)
+	fmt.Println("Error 3")
+
+	changePasswordInput := &cognito.ChangePasswordInput{
+		AccessToken:      aws.String(*result.AuthenticationResult.AccessToken),
+		PreviousPassword: aws.String(password),
+		ProposedPassword: aws.String(newpassword),
+	}
+
+	fmt.Println("Error 4")
+
+	result2, err2 := ctx.cognitoClient.ChangePassword(changePasswordInput)
+
+	if err2 != nil {
+		fmt.Println("Error  : ChangePassword", err2)
+		return "", err2
+	}
+
+	fmt.Println("Error 5")
+
+	return result2.String(), nil
 }
